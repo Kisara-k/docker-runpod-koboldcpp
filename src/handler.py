@@ -66,7 +66,14 @@ def run_inference(params):
     api_verb = api_config[0]
     api_path = api_config[1]
 
-    if api_verb == "POST":
+    if api_verb == "GET":
+        # For GET requests, we do not need to pass a body
+        response = automatic_session.get(
+            url='%s%s' % (config["baseurl"], api_path),
+            timeout=config["timeout"]
+        )
+        yield json.dumps(response.json())
+    elif api_verb == "POST":
         if api_name == "generate_stream":
             # Handle stream response
             response = automatic_session.post(
@@ -75,33 +82,26 @@ def run_inference(params):
                 timeout=config["timeout"],
                 stream=True
             )
-            
-            # Iterate over streaming response and extract tokens
+            # Iterate over streaming response and yield tokens
             for line in response.iter_lines(decode_unicode=True):
                 if line.startswith('data:'):
                     # Parse the JSON token message
                     try:
-                        token_data = json.loads(line[6:])  # Skip "data: "
+                        token_data = json.loads(line[6:].strip())  # Skip "data: "
                         token = token_data.get('token', '')
                         if token:
-                            print(f"Token: {token}")  # Display token
+                            yield token  # Yield token to client
                     except json.JSONDecodeError:
-                        print("Failed to decode token data")
-            return {"result": "Streaming completed"}
-
+                        yield "Failed to decode token data"
+            # Indicate the stream has ended
+            yield "\n\nStream completed."
         else:
             response = automatic_session.post(
                 url='%s%s' % (config["baseurl"], api_path),
                 json=params, 
                 timeout=config["timeout"]
             )
-            return response.json()
-    elif api_verb == "GET":
-        response = automatic_session.get(
-            url='%s%s' % (config["baseurl"], api_path),
-            timeout=config["timeout"]
-        )
-        return response.json()
+            yield json.dumps(response.json())
 
 
 # ---------------------------------------------------------------------------- #
@@ -111,11 +111,8 @@ def handler(event):
     '''
     This is the handler function that will be called by the serverless.
     '''
-
-    json_output = run_inference(event["input"])
-
-    # return the output that you want to be returned like pre-signed URLs to output artifacts
-    return json_output
+    # Return a generator that yields tokens or response data
+    return run_inference(event["input"])
 
 
 if __name__ == "__main__":
@@ -123,4 +120,4 @@ if __name__ == "__main__":
 
     print("KoboldCpp API Service is ready. Starting RunPod...")
 
-    runpod.serverless.start({"handler": handler})
+    runpod.serverless.start_streaming(handler=handler)
