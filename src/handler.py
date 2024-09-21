@@ -57,7 +57,6 @@ def run_inference(params):
     }
 
     api_name = params["api_name"]
-    path = None
 
     if api_name in config["api"]:
         api_config = config["api"][api_name]
@@ -67,15 +66,7 @@ def run_inference(params):
     api_verb = api_config[0]
     api_path = api_config[1]
 
-    if api_verb == "GET":
-        # For GET requests, we do not need to pass a body
-        response = automatic_session.get(
-            url='%s%s' % (config["baseurl"], api_path),
-            timeout=config["timeout"]
-        )
-        return response.json()
-
-    elif api_verb == "POST":
+    if api_verb == "POST":
         if api_name == "generate_stream":
             # Handle stream response
             response = automatic_session.post(
@@ -84,12 +75,19 @@ def run_inference(params):
                 timeout=config["timeout"],
                 stream=True
             )
-            # Collect streaming data
-            result = ''
+            
+            # Iterate over streaming response and extract tokens
             for line in response.iter_lines(decode_unicode=True):
-                if line:
-                    result += line + '\n'
-            return {"result": result}
+                if line.startswith('data:'):
+                    # Parse the JSON token message
+                    try:
+                        token_data = json.loads(line[6:])  # Skip "data: "
+                        token = token_data.get('token', '')
+                        if token:
+                            print(f"Token: {token}")  # Display token
+                    except json.JSONDecodeError:
+                        print("Failed to decode token data")
+            return {"result": "Streaming completed"}
 
         else:
             response = automatic_session.post(
@@ -98,6 +96,12 @@ def run_inference(params):
                 timeout=config["timeout"]
             )
             return response.json()
+    elif api_verb == "GET":
+        response = automatic_session.get(
+            url='%s%s' % (config["baseurl"], api_path),
+            timeout=config["timeout"]
+        )
+        return response.json()
 
 
 # ---------------------------------------------------------------------------- #
