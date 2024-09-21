@@ -1,29 +1,50 @@
-# Base image -> https://github.com/runpod/containers/blob/main/official-templates/base/Dockerfile
-# DockerHub -> https://hub.docker.com/r/runpod/base/tags
-FROM runpod/base:0.4.0-cuda11.8.0
+# ---------------------------------------------------------------------------- #
+#                         Stage 1: Prepare the image                           #
+# ---------------------------------------------------------------------------- #
+FROM python:3.10.9-slim
 
-# The base image comes with many system dependencies pre-installed to help you get started quickly.
-# Please refer to the base image's Dockerfile for more information before adding additional dependencies.
-# IMPORTANT: The base image overrides the default huggingface cache location.
+ENV DEBIAN_FRONTEND=noninteractive
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# --- Optional: System dependencies ---
-# COPY builder/setup.sh /setup.sh
-# RUN /bin/bash /setup.sh && \
-#     rm /setup.sh
+# Install necessary tools: wget, etc.
+RUN apt-get update && \
+    apt install -y wget && \
+    apt-get autoremove -y && rm -rf /var/lib/apt/lists/* && apt-get clean -y
 
+# Create a working directory
+WORKDIR /koboldcpp
 
-# Python dependencies
-COPY builder/requirements.txt /requirements.txt
-RUN python3.11 -m pip install --upgrade pip && \
-    python3.11 -m pip install --upgrade -r /requirements.txt --no-cache-dir && \
-    rm /requirements.txt
+# ---------------------------------------------------------------------------- #
+#                            Download KoboldCpp                                #
+# ---------------------------------------------------------------------------- #
+# Set up environment and download KoboldCpp binary
+RUN echo "Downloading KoboldCpp, please wait..." && \
+    wget -O dlfile.tmp https://kcpplinux.concedo.workers.dev && \
+    mv dlfile.tmp koboldcpp_linux && \
+    chmod +x ./koboldcpp_linux && \
+    test -f ./koboldcpp_linux && echo "Download Successful" || echo "Download Failed"
 
-# NOTE: The base image comes with multiple Python versions pre-installed.
-#       It is reccommended to specify the version of Python when running your code.
+# ---------------------------------------------------------------------------- #
+#                           Set up model path                                  #
+# ---------------------------------------------------------------------------- #
+# Assuming that model.gguf and imodel.gguf are stored in /runpod-volume/ directory
+RUN ln -s /runpod-volume/model.gguf /koboldcpp/model.gguf && \
+    ln -s /runpod-volume/imodel.gguf /koboldcpp/imodel.gguf
 
+# ---------------------------------------------------------------------------- #
+#                        Install Python Dependencies                           #
+# ---------------------------------------------------------------------------- #
+# Copy handler script and install dependencies
+COPY src/handler.py /koboldcpp/src/handler.py
+COPY requirements.txt /koboldcpp/requirements.txt
 
-# Add src files (Worker Template)
-ADD src .
+# Install Python dependencies from requirements.txt
+RUN pip install --no-cache-dir -r /koboldcpp/requirements.txt
 
-CMD python3.11 -u /handler.py
+# ---------------------------------------------------------------------------- #
+#                        Run KoboldCpp and handler.py                          #
+# ---------------------------------------------------------------------------- #
+# Run both koboldcpp and handler.py in parallel
+CMD ./koboldcpp_linux model.gguf --multiuser --usecublas 0 mmq --contextsize 4096 --gpulayers 999 --quiet --sdmodel imodel.gguf --sdthreads 4 --sdquant --sdclamped & \
+    python3 /koboldcpp/src/handler.py
