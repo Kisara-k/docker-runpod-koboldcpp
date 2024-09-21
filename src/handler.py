@@ -105,8 +105,9 @@ def handler(event):
     '''
     This is the handler function that will be called by the serverless.
     '''
-    # Return a generator that yields tokens or response data
-    return run_inference(event["input"])
+    # Yield each token or response progressively
+    for output in run_inference(event["input"]):
+        yield output
 
 
 if __name__ == "__main__":
@@ -117,5 +118,5 @@ if __name__ == "__main__":
     # Start the serverless function with generator streaming
     runpod.serverless.start({
         'handler': handler,
-        'return_aggregate_stream': True  # Optional, aggregate results if needed
+        'return_aggregate_stream': False  # Set this to False to enable streaming response
     })
