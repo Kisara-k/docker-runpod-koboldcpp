@@ -1,10 +1,10 @@
 import time
 import json
-
-import runpod
 import requests
 from requests.adapters import HTTPAdapter, Retry
+import runpod
 
+# Configure retry mechanism for the session
 automatic_session = requests.Session()
 retries = Retry(total=10, backoff_factor=0.1, status_forcelist=[502, 503, 504])
 automatic_session.mount('http://', HTTPAdapter(max_retries=retries))
@@ -31,24 +31,16 @@ def wait_for_service(url):
 
 def run_inference(params):
     config = {
-        "baseurl": "http://127.0.0.1:5001",  # Updated to use port 5001
+        "baseurl": "http://127.0.0.1:5001",  # Base URL for the API
         "api": {
-            # Retrieve max context length
             "true_max_context_length": ("GET", "/api/extra/true_max_context_length"),
-            # Retrieve KoboldCpp backend version
             "version": ("GET", "/api/extra/version"),
-
-            # KoboldAI United compatible core API
             "generate": ("POST", "/api/v1/generate"),
-            
-            # Kobold Extra API
             "generate_stream": ("POST", "/api/extra/generate/stream"),
             "check_generate": ("POST", "/api/extra/generate/check"),
             "token_count": ("POST", "/api/extra/tokencount"),
             "abort_generate": ("POST", "/api/extra/abort"),
             "transcribe": ("POST", "/api/extra/transcribe"),
-            
-            # SDAPI Image Gen
             "txt2img": ("POST", "/sdapi/v1/txt2img"),
             "img2img": ("POST", "/sdapi/v1/img2img"),
             "interrogate": ("POST", "/sdapi/v1/interrogate"),
@@ -66,21 +58,15 @@ def run_inference(params):
     api_verb = api_config[0]
     api_path = api_config[1]
 
-    if api_verb == "GET":
-        # For GET requests, we do not need to pass a body
-        response = automatic_session.get(
-            url='%s%s' % (config["baseurl"], api_path),
-            timeout=config["timeout"]
-        )
-        yield json.dumps(response.json())
-    elif api_verb == "POST":
+    # Generator handler for streaming tokens
+    if api_verb == "POST":
         if api_name == "generate_stream":
             # Handle stream response
             response = automatic_session.post(
                 url='%s%s' % (config["baseurl"], api_path),
                 json=params,
                 timeout=config["timeout"],
-                stream=True
+                stream=True  # Stream the response for real-time token output
             )
             # Iterate over streaming response and yield tokens
             for line in response.iter_lines(decode_unicode=True):
@@ -93,16 +79,24 @@ def run_inference(params):
                             yield token  # Yield token to client
                     except json.JSONDecodeError:
                         yield "Failed to decode token data"
-            # Indicate the stream has ended
+            # Indicate that the stream has completed
             yield "\n\nStream completed."
         else:
+            # For non-streaming POST requests, return JSON response
             response = automatic_session.post(
                 url='%s%s' % (config["baseurl"], api_path),
-                json=params, 
+                json=params,
                 timeout=config["timeout"]
             )
             yield json.dumps(response.json())
 
+    elif api_verb == "GET":
+        # For GET requests, return JSON response
+        response = automatic_session.get(
+            url='%s%s' % (config["baseurl"], api_path),
+            timeout=config["timeout"]
+        )
+        yield json.dumps(response.json())
 
 # ---------------------------------------------------------------------------- #
 #                                RunPod Handler                                #
@@ -120,4 +114,8 @@ if __name__ == "__main__":
 
     print("KoboldCpp API Service is ready. Starting RunPod...")
 
-    runpod.serverless.start_streaming(handler=handler)
+    # Start the serverless function with generator streaming
+    runpod.serverless.start({
+        'handler': handler,
+        'return_aggregate_stream': True  # Optional, aggregate results if needed
+    })
